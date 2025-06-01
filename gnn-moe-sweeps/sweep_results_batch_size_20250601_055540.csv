@@ -1,0 +1,4 @@
+embed_dim,num_layers,num_experts,batch_size,learning_rate,gnn_layers,dropout_rate,epochs,max_batches_per_epoch,dataset_name,dataset_config_name,num_train_samples,num_eval_samples,eval_every,num_workers_dataloader,seed,run_name,total_params_str,best_eval_loss,best_eval_perplexity,training_time_min,data_mode,error_message
+384,4,4,32,0.0003,2,0.1,10,-1,wikitext,wikitext-2-v1,-1,-1,250,2,42,sweep_batch_size_20250601_055540_run1_batchBS32,70055129,4.4753,87.82,19.2,REAL_WIKITEXT_2_V1,
+384,4,4,64,0.0003,2,0.1,10,-1,wikitext,wikitext-2-v1,-1,-1,250,2,42,sweep_batch_size_20250601_055540_run2_batchBS64,70055129,4.5336,93.09,16.5,REAL_WIKITEXT_2_V1,
+384,4,4,128,0.0003,2,0.1,10,-1,wikitext,wikitext-2-v1,-1,-1,250,2,42,sweep_batch_size_20250601_055540_run3_batchBS128,70055129,4.6104,100.52,15.1,REAL_WIKITEXT_2_V1,

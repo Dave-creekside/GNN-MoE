@@ -1,0 +1,5 @@
+embed_dim,num_layers,num_experts,batch_size,learning_rate,gnn_layers,dropout_rate,epochs,max_batches_per_epoch,dataset_name,dataset_config_name,num_train_samples,num_eval_samples,eval_every,num_workers_dataloader,seed,run_name,total_params_str,best_eval_loss,best_eval_perplexity,training_time_min,data_mode,error_message
+384,4,4,64,0.0003,2,0.0,10,-1,wikitext,wikitext-2-v1,-1,-1,250,2,42,sweep_dropout_rate_20250601_065109_run1_dropoutR0.0,70055129,4.6928,109.16,16.1,REAL_WIKITEXT_2_V1,
+384,4,4,64,0.0003,2,0.05,10,-1,wikitext,wikitext-2-v1,-1,-1,250,2,42,sweep_dropout_rate_20250601_065109_run2_dropoutR0.05,70055129,4.6088,100.37,16.3,REAL_WIKITEXT_2_V1,
+384,4,4,64,0.0003,2,0.1,10,-1,wikitext,wikitext-2-v1,-1,-1,250,2,42,sweep_dropout_rate_20250601_065109_run3_dropoutR0.1,70055129,4.5336,93.09,16.4,REAL_WIKITEXT_2_V1,
+384,4,4,64,0.0003,2,0.15,10,-1,wikitext,wikitext-2-v1,-1,-1,250,2,42,sweep_dropout_rate_20250601_065109_run4_dropoutR0.15,70055129,4.4678,87.17,16.4,REAL_WIKITEXT_2_V1,
