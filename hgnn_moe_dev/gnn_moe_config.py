@@ -42,6 +42,12 @@ class GNNMoEConfig:
     seed: int = 42
     num_workers_dataloader: int = 2 # Default for A100, can be overridden
 
+    # HGNN Specific Configuration (defaults for GNN compatibility)
+    coupler_type: str = "GNN"  # Can be "GNN" or "HGNN"
+    hgnn_conv_type: Optional[str] = "HypergraphConv" # PyG layer name, e.g., "HypergraphConv"
+    static_hyperedge_strategy: Optional[str] = "all_pairs" # e.g., "all_pairs", "all_triplets"
+    hgnn_learnable_edge_weights: bool = True # If True, HGNNExpertCoupler will have learnable weights for hyperedges
+
     def __post_init__(self):
         # Auto-calculate num_heads if embed_dim is a multiple of 64 and num_heads is at its default
         if self.embed_dim % 64 == 0:

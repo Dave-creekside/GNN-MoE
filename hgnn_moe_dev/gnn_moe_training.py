@@ -16,6 +16,8 @@ import shutil
 from tqdm import tqdm
 from collections import defaultdict
 import time
+import psutil  # For system monitoring
+from contextlib import contextmanager
 
 # Assuming GNNMoEConfig and model classes will be imported in the main script
 # from gnn_moe_config import GNNMoEConfig
@@ -85,6 +87,39 @@ def load_checkpoint(checkpoint_path, model, optimizer=None, scheduler=None):
     print(f"✅ Checkpoint loaded. Resuming from epoch {start_epoch}, step {step}, best_eval_loss {best_eval_loss:.4f}")
     return start_epoch, step, best_eval_loss
 
+# --- Performance Monitoring ---
+@contextmanager
+def gpu_memory_monitor(device, step_name=""):
+    """Context manager to monitor GPU memory usage"""
+    if torch.cuda.is_available() and device.type == 'cuda':
+        torch.cuda.synchronize()
+        mem_before = torch.cuda.memory_allocated(device) / 1024**3  # GB
+        start_time = time.time()
+        yield
+        torch.cuda.synchronize()
+        end_time = time.time()
+        mem_after = torch.cuda.memory_allocated(device) / 1024**3  # GB
+        print(f"⚡ {step_name}: {end_time-start_time:.3f}s, VRAM: {mem_before:.1f}→{mem_after:.1f}GB (+{mem_after-mem_before:.1f}GB)")
+    else:
+        start_time = time.time()
+        yield
+        end_time = time.time()
+        print(f"⚡ {step_name}: {end_time-start_time:.3f}s (CPU mode)")
+
+def get_system_stats():
+    """Get current system resource utilization"""
+    cpu_percent = psutil.cpu_percent(interval=0.1)
+    memory = psutil.virtual_memory()
+    stats = {
+        'cpu_percent': cpu_percent,
+        'ram_used_gb': memory.used / 1024**3,
+        'ram_total_gb': memory.total / 1024**3
+    }
+    if torch.cuda.is_available():
+        stats['gpu_memory_gb'] = torch.cuda.memory_allocated() / 1024**3
+        stats['gpu_reserved_gb'] = torch.cuda.memory_reserved() / 1024**3
+    return stats
+
 # --- Training Utilities ---
 def prepare_batch(batch, device):
     input_ids = batch['input_ids'].to(device, non_blocking=True)
@@ -108,7 +143,7 @@ def evaluate_model(model, eval_loader, device, config, max_batches=-1): # max_ba
         print("⚠️ Eval loader is empty. Skipping evaluation.")
         return float('inf'), float('inf')
 
-    pbar_eval = tqdm(eval_loader, desc="Evaluating", leave=False, total=num_eval_batches)
+    pbar_eval = tqdm(eval_loader, desc="Evaluating", leave=False, total=num_eval_batches, miniters=1, mininterval=0.1)
     with torch.no_grad():
         for i, batch in enumerate(pbar_eval):
             if i >= num_eval_batches: # Ensure we don't exceed specified/available batches
@@ -158,7 +193,8 @@ def train_gnn_moe(model, train_loader, eval_loader, device, config,
     current_step = resume_step 
     start_time = time.time()
 
-    print(f"\n🚀 Starting/Resuming GNN-MoE Training on {device}")
+    coupler_name = config.coupler_type if hasattr(config, 'coupler_type') else 'GNN'
+    print(f"\n🚀 Starting/Resuming {coupler_name}-MoE Training on {device}")
     if resume_from_epoch > 0 or resume_step > 0:
         print(f"🔄 Resuming from epoch {resume_from_epoch}, global step {resume_step}. Initial best_eval_loss: {initial_best_loss:.4f}")
     print(f"📊 Model: {sum(p.numel() for p in model.parameters()):,} parameters")
@@ -175,7 +211,7 @@ def train_gnn_moe(model, train_loader, eval_loader, device, config,
         # If current_step > 0 and it's the first epoch of resumption, skip already processed batches.
         start_batch_idx = (current_step % actual_batches_per_epoch) if (epoch == resume_from_epoch and current_step > 0 and current_step < total_steps) else 0
         
-        pbar_train = tqdm(train_loader, desc=f"Epoch {epoch+1}/{config.epochs}", total=actual_batches_per_epoch, initial=start_batch_idx)
+        pbar_train = tqdm(train_loader, desc=f"Epoch {epoch+1}/{config.epochs}", total=actual_batches_per_epoch, initial=start_batch_idx, miniters=0, mininterval=0.05)
 
         if start_batch_idx > 0:
             print(f"Epoch {epoch+1}: Resuming, skipping to batch index {start_batch_idx} (global step {current_step}).")
@@ -255,7 +291,7 @@ def train_gnn_moe(model, train_loader, eval_loader, device, config,
         }, False, checkpoint_dir=config.checkpoint_dir, filename=f"checkpoint_epoch_{epoch+1}.pth.tar")
 
     total_time_min = (time.time() - start_time) / 60
-    print(f"\n✅ GNN-MoE Training Complete!")
+    print(f"\n✅ {coupler_name}-MoE Training Complete!")
     print(f"🎯 Best eval loss during this run: {best_eval_loss:.4f}")
     print(f"⏱️ Total time for this run: {total_time_min:.1f} minutes")
     return stats, best_eval_loss

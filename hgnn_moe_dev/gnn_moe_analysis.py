@@ -46,7 +46,11 @@ def analyze_expert_communication(model, config, detailed=True):
             if matrix is None: # Check if a specific matrix is None
                 print(f"  GNN Layer {gnn_idx+1} matrix is None.")
                 continue
-            print(f"  GNN Layer {gnn_idx+1} - Expert connectivity (Adjacency Strength):")
+            coupler_name = getattr(config, 'coupler_type', 'GNN')
+            if coupler_name == 'HGNN':
+                print(f"  HGNN Layer {gnn_idx+1} - Hyperedge Weights:")
+            else:
+                print(f"  GNN Layer {gnn_idx+1} - Expert connectivity (Adjacency Strength):")
             connectivity = matrix.cpu().numpy()
             if detailed:
                 for i in range(connectivity.shape[0]):
@@ -97,28 +101,39 @@ def plot_expert_connectivity(comm_data, config):
             
             ax = axes[plot_idx]
             connectivity = matrix.cpu().numpy()
-            
-            im = ax.imshow(connectivity, cmap='Blues', vmin=0, vmax=1)
-            ax.set_title(f'{layer_name} GNN-{gnn_idx+1}\n(Avg: {connectivity.mean():.2f})')
-            ax.set_xlabel('To Expert'); ax.set_ylabel('From Expert')
-            ax.set_xticks(np.arange(config.num_experts))
-            ax.set_yticks(np.arange(config.num_experts))
-            ax.set_xticklabels([f'E{i}' for i in range(config.num_experts)])
-            ax.set_yticklabels([f'E{i}' for i in range(config.num_experts)])
-            
-            for i in range(config.num_experts):
-                for j in range(config.num_experts):
-                    ax.text(j, i, f'{connectivity[i,j]:.2f}', ha='center', va='center', 
-                            color='white' if connectivity[i,j] > 0.6 else ('black' if connectivity[i,j] > 0.1 else 'grey'), 
-                            fontsize=8)
-            fig.colorbar(im, ax=ax, shrink=0.8)
+
+            if connectivity.ndim == 2: # GNN Adjacency Matrix
+                im = ax.imshow(connectivity, cmap='Blues', vmin=0, vmax=1)
+                ax.set_title(f'{layer_name} GNN-{gnn_idx+1} Adjacency\n(Avg: {connectivity.mean():.2f})')
+                ax.set_xlabel('To Expert'); ax.set_ylabel('From Expert')
+                ax.set_xticks(np.arange(config.num_experts))
+                ax.set_yticks(np.arange(config.num_experts))
+                ax.set_xticklabels([f'E{i}' for i in range(config.num_experts)])
+                ax.set_yticklabels([f'E{i}' for i in range(config.num_experts)])
+                
+                for i in range(config.num_experts):
+                    for j in range(config.num_experts):
+                        ax.text(j, i, f'{connectivity[i,j]:.2f}', ha='center', va='center', 
+                                color='white' if connectivity[i,j] > 0.6 else ('black' if connectivity[i,j] > 0.1 else 'grey'), 
+                                fontsize=8)
+                fig.colorbar(im, ax=ax, shrink=0.8)
+            elif connectivity.ndim == 1: # HGNN Hyperedge Weights
+                ax.bar(range(len(connectivity)), connectivity, color='skyblue')
+                ax.set_title(f'{layer_name} HGNN-{gnn_idx+1} Hyperedge Weights\n(Avg: {connectivity.mean():.2f})')
+                ax.set_xlabel('Hyperedge Index'); ax.set_ylabel('Weight')
+                ax.set_xticks(range(len(connectivity))) # Show ticks for each hyperedge
+                ax.grid(True, axis='y', linestyle='--', alpha=0.7)
+            else:
+                ax.text(0.5, 0.5, f"Unsupported data\nshape: {connectivity.shape}", ha='center', va='center')
+                ax.set_title(f'{layer_name} GNN/HGNN-{gnn_idx+1}')
+
             plot_idx += 1
         if plot_idx >= len(axes) and plot_idx < total_gnn_matrices: break # Break outer loop too
     
     for idx_unused in range(plot_idx, len(axes)):
         axes[idx_unused].axis('off')
     
-    fig.suptitle(f"Expert Connectivity ({config.run_name if config.run_name else 'DefaultRun'})", fontsize=16, y=1.0)
+    fig.suptitle(f"Expert Communication Analysis ({config.run_name if config.run_name else 'DefaultRun'})", fontsize=16, y=1.0)
     plt.tight_layout(rect=[0, 0, 1, 0.97]) # Adjust for suptitle
     plt.savefig(save_path)
     print(f"🎨 Expert connectivity plot saved to {save_path}")
@@ -196,7 +211,8 @@ def plot_training_results(stats, config):
     plt.close(fig)
 
 def analyze_model_efficiency(model, config):
-    print("\n⚡ GNN-MoE Efficiency Analysis")
+    coupler_name = getattr(config, 'coupler_type', 'GNN')
+    print(f"\n⚡ {coupler_name}-MoE Efficiency Analysis")
     total_params = sum(p.numel() for p in model.parameters())
     
     # Ensure model_layers is the correct attribute name
@@ -207,15 +223,16 @@ def analyze_model_efficiency(model, config):
         return
 
     expert_params = sum(p.numel() for layer in model.model_layers for expert in layer.experts for p in expert.parameters())
-    gnn_params = sum(p.numel() for layer in model.model_layers for p in layer.gnn_coupler.parameters())
+    gnn_params = sum(p.numel() for layer in model.model_layers for p in layer.coupler.parameters())
     other_params = total_params - expert_params - gnn_params
     
     print(f"  Total Parameters: {total_params:,}")
     print(f"  Expert Parameters: {expert_params:,} ({expert_params/total_params*100:.1f}%)")
-    print(f"  GNN Coord Params: {gnn_params:,} ({gnn_params/total_params*100:.1f}%)")
+    coupler_name = getattr(config, 'coupler_type', 'GNN')
+    print(f"  {coupler_name} Coord Params: {gnn_params:,} ({gnn_params/total_params*100:.1f}%)")
     print(f"  Other (Embeds, etc.): {other_params:,} ({other_params/total_params*100:.1f}%)")
     print(f"  Expert Utilization: ALL {config.num_experts} experts active per layer.")
-    print(f"  GNN Coordination: {config.gnn_layers} GNN layers per expert group.")
+    print(f"  {coupler_name} Coordination: {config.gnn_layers} {coupler_name} layers per expert group.")
 
 if __name__ == '__main__':
     # Example usage (requires GNNMoEConfig and GNNMoEModel to be defined/imported)
