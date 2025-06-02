@@ -225,26 +225,24 @@ class HGNNExpertCoupler(nn.Module):
         # Prepare edge weights for batched operation
         edge_weights_for_conv = None
         if self.config.hgnn_learnable_edge_weights and self.hyperedge_weights is not None:
-            # PyG batching renumbers hyperedge IDs globally, creating fewer unique IDs than expected
-            # We need to match the actual number of unique hyperedge IDs in the batched structure
+            # PyG batching creates sparse hyperedge IDs - we need weights covering the full ID range
+            max_hyperedge_id = batched_data.edge_index[1].max().item()
+            weight_array_size = max_hyperedge_id + 1  # Cover full range [0, max_id]
             
-            unique_hyperedge_ids = torch.unique(batched_data.edge_index[1])
-            num_unique_hyperedges = len(unique_hyperedge_ids)
-            
-            # Create weight mapping: for each unique hyperedge ID, assign a weight
-            # We'll replicate the original weights in a pattern that covers all unique IDs
-            if num_unique_hyperedges <= self._num_hyperedges:
-                # Simple case: use first N weights
-                edge_weights_for_conv = self.hyperedge_weights[:num_unique_hyperedges]
-            else:
-                # Complex case: tile/repeat original weights to cover all unique IDs  
-                repeat_factor = (num_unique_hyperedges + self._num_hyperedges - 1) // self._num_hyperedges  # Ceiling division
-                edge_weights_for_conv = self.hyperedge_weights.repeat(repeat_factor)[:num_unique_hyperedges]
-            
-            # Final validation
-            if edge_weights_for_conv.shape[0] != num_unique_hyperedges:
-                print(f"WARNING: Weight array size {edge_weights_for_conv.shape[0]} != unique hyperedges {num_unique_hyperedges}")
-                edge_weights_for_conv = None  # Fallback: disable weights to avoid crash
+            # Create weight array by cycling through original weight parameters
+            try:
+                all_indices = torch.arange(weight_array_size, device=batched_data.edge_index.device)
+                weight_indices = all_indices % self._num_hyperedges
+                edge_weights_for_conv = self.hyperedge_weights[weight_indices]
+                
+                # Validate the mapping worked correctly
+                if edge_weights_for_conv.shape[0] != weight_array_size:
+                    print(f"Warning: Hyperedge weight mapping failed. Expected {weight_array_size}, got {edge_weights_for_conv.shape[0]}")
+                    edge_weights_for_conv = None
+                    
+            except Exception as e:
+                print(f"Warning: Hyperedge weight mapping failed: {e}")
+                edge_weights_for_conv = None
         
         # Pass through HGNN layers with batched processing
         h_batched = batched_data.x  # (B*L*E, D_embed)
