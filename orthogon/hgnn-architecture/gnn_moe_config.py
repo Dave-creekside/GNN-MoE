@@ -47,6 +47,14 @@ class GNNMoEConfig:
     hgnn_conv_type: Optional[str] = "HypergraphConv" # PyG layer name, e.g., "HypergraphConv"
     static_hyperedge_strategy: Optional[str] = "all_pairs" # e.g., "all_pairs", "all_triplets"
     hgnn_learnable_edge_weights: bool = True # If True, HGNNExpertCoupler will have learnable weights for hyperedges
+    
+    # Orthogonal Expert Training Configuration
+    apply_orthogonality_loss: bool = True # Enable/disable orthogonality constraints
+    orthogonality_loss_weight: float = 0.1 # λ weight for orthogonality penalty in total loss
+    orthogonality_aggregation: str = "mean" # How to aggregate across batch/seq: "mean" or "pool"
+    orthogonality_loss_type: str = "gram_identity" # Type of orthogonality loss: "gram_identity", "cosine_similarity"
+    orthogonality_warmup_steps: int = 1000 # Steps before orthogonality loss reaches full weight
+    track_expert_specialization: bool = True # Enable expert specialization monitoring
 
     def __post_init__(self):
         # Auto-calculate num_heads if embed_dim is a multiple of 64 and num_heads is at its default

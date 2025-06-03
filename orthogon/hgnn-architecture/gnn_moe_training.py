@@ -226,28 +226,49 @@ def train_gnn_moe(model, train_loader, eval_loader, device, config,
             input_ids, attention_mask, labels = prepare_batch(batch, device)
             
             optimizer.zero_grad()
+            
+            # Forward pass
             outputs = model(input_ids, attention_mask, labels=labels)
-            loss = outputs['loss']
-            loss.backward()
+            lm_loss = outputs['loss']  # Language modeling loss
+            
+            # Get orthogonality loss from model with current training step for warmup
+            orthogonality_loss = model.get_total_orthogonality_loss(training_step=current_step)
+            
+            # Combine losses
+            total_loss = lm_loss + orthogonality_loss
+            
+            total_loss.backward()
             grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             optimizer.step()
             if scheduler: scheduler.step() # Step scheduler after optimizer
 
             current_step += 1
-            epoch_loss += loss.item()
+            epoch_loss += total_loss.item()
             epoch_steps += 1
             
-            stats['train_loss'].append(loss.item())
+            # Track both losses separately
+            stats['train_loss'].append(total_loss.item())
+            stats['lm_loss'].append(lm_loss.item())
+            stats['orthogonality_loss'].append(orthogonality_loss.item())
             stats['grad_norm'].append(grad_norm.item())
             stats['learning_rate'].append(scheduler.get_last_lr()[0] if scheduler else config.learning_rate)
+            
+            # Track expert specialization metrics if enabled
+            if config.track_expert_specialization and current_step % 100 == 0:  # Every 100 steps
+                specialization_metrics = model.get_expert_specialization_metrics()
+                stats['expert_specialization'].append({
+                    'step': current_step,
+                    'metrics': specialization_metrics
+                })
 
             tokens_processed = current_step * config.batch_size * config.max_seq_length
             elapsed_train = time.time() - start_time
             tokens_per_sec = tokens_processed / elapsed_train if elapsed_train > 0 else 0
             
             pbar_train.set_postfix({
-                'loss': f'{loss.item():.4f}', 'grad': f'{grad_norm.item():.2f}',
-                'tok/s': f'{tokens_per_sec:.0f}', 'lr': f"{scheduler.get_last_lr()[0] if scheduler else config.learning_rate:.1e}"
+                'total': f'{total_loss.item():.4f}', 'lm': f'{lm_loss.item():.4f}', 'orth': f'{orthogonality_loss.item():.4f}',
+                'grad': f'{grad_norm.item():.2f}', 'tok/s': f'{tokens_per_sec:.0f}',
+                'lr': f"{scheduler.get_last_lr()[0] if scheduler else config.learning_rate:.1e}"
             })
 
             if current_step % config.eval_every == 0 or current_step == total_steps:

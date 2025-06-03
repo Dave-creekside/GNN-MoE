@@ -337,6 +337,10 @@ class GNNMoELayer(nn.Module): # This layer can now use GNN or HGNN based on conf
         self.config = config
         self.experts = nn.ModuleList([ExpertBlock(config) for _ in range(config.num_experts)])
         
+        # Initialize orthogonality loss tracking
+        self._last_orthogonality_loss = None
+        self._training_step = 0
+        
         if config.coupler_type == "HGNN":
             if not PYG_AVAILABLE:
                 raise ImportError("PyTorch Geometric is required for HGNN coupler_type but not found.")
@@ -348,10 +352,91 @@ class GNNMoELayer(nn.Module): # This layer can now use GNN or HGNN based on conf
         else:
             raise ValueError(f"Unknown coupler_type: {config.coupler_type}")
 
+    def compute_orthogonality_loss(self, expert_outputs_stack):
+        """
+        Compute soft orthogonality loss on expert output representations.
+        
+        Args:
+            expert_outputs_stack: (B, L, E, D) tensor from stacked expert outputs
+        Returns:
+            scalar loss encouraging expert outputs to be orthogonal
+        """
+        if not self.config.apply_orthogonality_loss:
+            return torch.tensor(0.0, device=expert_outputs_stack.device)
+        
+        B, L, E, D = expert_outputs_stack.shape
+        
+        if self.config.orthogonality_loss_type == "gram_identity":
+            if self.config.orthogonality_aggregation == "mean":
+                # Average across batch and sequence dimensions
+                mean_expert_outputs = expert_outputs_stack.mean(dim=(0, 1))  # (E, D)
+                # Compute Gram matrix: expert_i · expert_j for all pairs
+                gram_matrix = torch.mm(mean_expert_outputs, mean_expert_outputs.T)  # (E, E)
+            else:  # "pool"
+                # Pool approach: flatten B,L dims and compute gram matrix
+                flat_outputs = expert_outputs_stack.view(-1, E, D)  # (B*L, E, D)
+                gram_matrices = torch.bmm(flat_outputs, flat_outputs.transpose(1, 2))  # (B*L, E, E)
+                gram_matrix = gram_matrices.mean(dim=0)  # (E, E)
+            
+            # Target: identity matrix (orthogonal experts)
+            identity_target = torch.eye(E, device=expert_outputs_stack.device)
+            
+            # MSE loss between gram matrix and identity
+            orthogonality_loss = F.mse_loss(gram_matrix, identity_target)
+            
+        elif self.config.orthogonality_loss_type == "cosine_similarity":
+            # Alternative: penalize high cosine similarity between expert pairs
+            if self.config.orthogonality_aggregation == "mean":
+                mean_expert_outputs = expert_outputs_stack.mean(dim=(0, 1))  # (E, D)
+                expert_norms = F.normalize(mean_expert_outputs, p=2, dim=1)  # L2 normalize
+                cosine_sim_matrix = torch.mm(expert_norms, expert_norms.T)  # (E, E)
+            else:  # "pool"
+                flat_outputs = expert_outputs_stack.view(-1, E, D)  # (B*L, E, D)
+                expert_norms = F.normalize(flat_outputs, p=2, dim=2)  # L2 normalize
+                cosine_sim_matrices = torch.bmm(expert_norms, expert_norms.transpose(1, 2))  # (B*L, E, E)
+                cosine_sim_matrix = cosine_sim_matrices.mean(dim=0)  # (E, E)
+            
+            # Zero out diagonal (expert similarity with itself should be 1)
+            mask = ~torch.eye(E, dtype=torch.bool, device=expert_outputs_stack.device)
+            off_diagonal_cosines = cosine_sim_matrix[mask]
+            
+            # Penalize high cosine similarities (want them close to 0 for orthogonality)
+            orthogonality_loss = torch.mean(off_diagonal_cosines ** 2)
+        
+        else:
+            raise ValueError(f"Unknown orthogonality_loss_type: {self.config.orthogonality_loss_type}")
+        
+        return orthogonality_loss
+    
+    def get_orthogonality_warmup_factor(self):
+        """
+        Get warmup factor for orthogonality loss (gradual increase from 0 to 1).
+        """
+        if self.config.orthogonality_warmup_steps <= 0:
+            return 1.0
+        
+        warmup_factor = min(1.0, self._training_step / self.config.orthogonality_warmup_steps)
+        return warmup_factor
+    
+    def update_training_step(self, step):
+        """
+        Update training step for orthogonality warmup tracking.
+        """
+        self._training_step = step
+    
+    def get_last_orthogonality_loss(self):
+        """
+        Get the last computed orthogonality loss for this layer.
+        """
+        return self._last_orthogonality_loss if self._last_orthogonality_loss is not None else torch.tensor(0.0)
+
     def forward(self, x, causal_mask=None, key_padding_mask=None):
         expert_outputs_tensors = [expert(x, causal_mask, key_padding_mask) for expert in self.experts]
         # Stack expert outputs: (B, L, E, D)
         stacked_expert_outputs = torch.stack(expert_outputs_tensors, dim=2)
+        
+        # NEW: Compute orthogonality loss and store for retrieval
+        self._last_orthogonality_loss = self.compute_orthogonality_loss(stacked_expert_outputs)
         
         coordinated = self.coupler(stacked_expert_outputs) # Coupler expects (B,L,E,D)
         return x + coordinated # Additive skip connection over the whole MoE block
@@ -411,6 +496,73 @@ class GNNMoEModel(nn.Module):
             return {'loss': loss, 'logits': logits}
         return {'logits': logits}
 
+    def get_total_orthogonality_loss(self, training_step=None):
+        """
+        Collect orthogonality losses from all layers and apply warmup factor.
+        
+        Args:
+            training_step: Current training step for warmup calculation
+        Returns:
+            total_orthogonality_loss: Weighted sum of orthogonality losses from all layers
+        """
+        if not self.config.apply_orthogonality_loss:
+            return torch.tensor(0.0)
+        
+        # Update training step for all layers if provided
+        if training_step is not None:
+            self.update_all_training_steps(training_step)
+        
+        total_loss = torch.tensor(0.0)
+        device = next(self.parameters()).device
+        total_loss = total_loss.to(device)
+        
+        for layer_instance in self.model_layers:
+            if hasattr(layer_instance, 'get_last_orthogonality_loss'):
+                layer_loss = layer_instance.get_last_orthogonality_loss()
+                if layer_loss is not None:
+                    warmup_factor = layer_instance.get_orthogonality_warmup_factor()
+                    total_loss = total_loss + (layer_loss * warmup_factor)
+        
+        return total_loss * self.config.orthogonality_loss_weight
+    
+    def update_all_training_steps(self, step):
+        """
+        Update training step for all layers (for orthogonality warmup).
+        """
+        for layer_instance in self.model_layers:
+            if hasattr(layer_instance, 'update_training_step'):
+                layer_instance.update_training_step(step)
+    
+    def get_expert_specialization_metrics(self):
+        """
+        Analyze expert specialization across all layers.
+        
+        Returns:
+            dict: Expert specialization metrics including orthogonality measures
+        """
+        if not self.config.track_expert_specialization:
+            return {}
+        
+        metrics = {
+            'layer_orthogonality_losses': [],
+            'layer_warmup_factors': [],
+            'total_orthogonality_loss': self.get_total_orthogonality_loss().item()
+        }
+        
+        for i, layer_instance in enumerate(self.model_layers):
+            if hasattr(layer_instance, 'get_last_orthogonality_loss'):
+                loss = layer_instance.get_last_orthogonality_loss()
+                warmup = layer_instance.get_orthogonality_warmup_factor()
+                
+                metrics['layer_orthogonality_losses'].append({
+                    f'layer_{i}': loss.item() if loss is not None else 0.0
+                })
+                metrics['layer_warmup_factors'].append({
+                    f'layer_{i}': warmup
+                })
+        
+        return metrics
+    
     def analyze_expert_communication(self): # Renamed from get_communication_data for consistency
         comm_data = {}
         for i, layer_instance in enumerate(self.model_layers):

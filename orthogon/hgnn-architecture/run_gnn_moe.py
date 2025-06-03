@@ -77,6 +77,20 @@ if __name__ == "__main__":
     hew_group.add_argument('--hgnn_learnable_edge_weights', action='store_true', dest='hgnn_learnable_cli_true', help="Enable learnable hyperedge weights (sets to True).")
     hew_group.add_argument('--no_hgnn_learnable_edge_weights', action='store_false', dest='hgnn_learnable_cli_false', help="Disable learnable hyperedge weights (sets to False).")
     
+    # Orthogonal Expert Training Args
+    orth_group = parser.add_mutually_exclusive_group()
+    orth_group.add_argument('--apply_orthogonality_loss', action='store_true', dest='apply_orthogonality_cli_true', help="Enable orthogonality constraints (sets to True).")
+    orth_group.add_argument('--no_apply_orthogonality_loss', action='store_false', dest='apply_orthogonality_cli_false', help="Disable orthogonality constraints (sets to False).")
+    
+    parser.add_argument('--orthogonality_loss_weight', type=float, default=temp_cfg.orthogonality_loss_weight, help=f"Weight for orthogonality loss (default: {temp_cfg.orthogonality_loss_weight})")
+    parser.add_argument('--orthogonality_loss_type', type=str, default=temp_cfg.orthogonality_loss_type, choices=["gram_identity", "cosine_similarity"], help=f"Type of orthogonality loss (default: {temp_cfg.orthogonality_loss_type})")
+    parser.add_argument('--orthogonality_aggregation', type=str, default=temp_cfg.orthogonality_aggregation, choices=["mean", "pool"], help=f"Aggregation method for orthogonality loss (default: {temp_cfg.orthogonality_aggregation})")
+    parser.add_argument('--orthogonality_warmup_steps', type=int, default=temp_cfg.orthogonality_warmup_steps, help=f"Warmup steps for orthogonality loss (default: {temp_cfg.orthogonality_warmup_steps})")
+    
+    spec_group = parser.add_mutually_exclusive_group()
+    spec_group.add_argument('--track_expert_specialization', action='store_true', dest='track_specialization_cli_true', help="Enable expert specialization tracking (sets to True).")
+    spec_group.add_argument('--no_track_expert_specialization', action='store_false', dest='track_specialization_cli_false', help="Disable expert specialization tracking (sets to False).")
+    
     # Training Hyperparameters Args
     parser.add_argument('--batch_size', type=int, default=temp_cfg.batch_size, help=f"Batch size (default: {temp_cfg.batch_size})")
     parser.add_argument('--learning_rate', type=float, default=temp_cfg.learning_rate, help=f"Learning rate (default: {temp_cfg.learning_rate})")
@@ -106,15 +120,27 @@ if __name__ == "__main__":
     cfg = GNNMoEConfig()
 
     # Override config with CLI arguments
-    # Handle hgnn_learnable_edge_weights separately due to mutually exclusive group
+    # Handle boolean CLI arguments separately due to mutually exclusive groups
     hgnn_learnable_value_from_cli = None
     if args.hgnn_learnable_cli_true: # This implies --hgnn_learnable_edge_weights was passed
         hgnn_learnable_value_from_cli = True
     elif hasattr(args, 'hgnn_learnable_cli_false') and not args.hgnn_learnable_cli_false: # This implies --no_hgnn_learnable_edge_weights was passed
         hgnn_learnable_value_from_cli = False
+    
+    apply_orthogonality_value_from_cli = None
+    if args.apply_orthogonality_cli_true: # This implies --apply_orthogonality_loss was passed
+        apply_orthogonality_value_from_cli = True
+    elif hasattr(args, 'apply_orthogonality_cli_false') and not args.apply_orthogonality_cli_false: # This implies --no_apply_orthogonality_loss was passed
+        apply_orthogonality_value_from_cli = False
+    
+    track_specialization_value_from_cli = None
+    if args.track_specialization_cli_true: # This implies --track_expert_specialization was passed
+        track_specialization_value_from_cli = True
+    elif hasattr(args, 'track_specialization_cli_false') and not args.track_specialization_cli_false: # This implies --no_track_expert_specialization was passed
+        track_specialization_value_from_cli = False
         
     for arg_name, arg_val in vars(args).items():
-        if arg_name in ['hgnn_learnable_cli_true', 'hgnn_learnable_cli_false']:
+        if arg_name in ['hgnn_learnable_cli_true', 'hgnn_learnable_cli_false', 'apply_orthogonality_cli_true', 'apply_orthogonality_cli_false', 'track_specialization_cli_true', 'track_specialization_cli_false']:
             continue # Skip these temp argparse dest names
 
         if hasattr(cfg, arg_name):
@@ -132,6 +158,16 @@ if __name__ == "__main__":
         if cfg.hgnn_learnable_edge_weights != hgnn_learnable_value_from_cli:
              verbose_print(f"Overriding config.hgnn_learnable_edge_weights from {cfg.hgnn_learnable_edge_weights} to CLI arg: {hgnn_learnable_value_from_cli}")
         cfg.hgnn_learnable_edge_weights = hgnn_learnable_value_from_cli
+    
+    if apply_orthogonality_value_from_cli is not None:
+        if cfg.apply_orthogonality_loss != apply_orthogonality_value_from_cli:
+             verbose_print(f"Overriding config.apply_orthogonality_loss from {cfg.apply_orthogonality_loss} to CLI arg: {apply_orthogonality_value_from_cli}")
+        cfg.apply_orthogonality_loss = apply_orthogonality_value_from_cli
+    
+    if track_specialization_value_from_cli is not None:
+        if cfg.track_expert_specialization != track_specialization_value_from_cli:
+             verbose_print(f"Overriding config.track_expert_specialization from {cfg.track_expert_specialization} to CLI arg: {track_specialization_value_from_cli}")
+        cfg.track_expert_specialization = track_specialization_value_from_cli
     
     # Set global verbose flag
     if args.quiet:
