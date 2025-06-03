@@ -55,6 +55,13 @@ class GNNMoEConfig:
     orthogonality_loss_type: str = "gram_identity" # Type of orthogonality loss: "gram_identity", "cosine_similarity"
     orthogonality_warmup_steps: int = 1000 # Steps before orthogonality loss reaches full weight
     track_expert_specialization: bool = True # Enable expert specialization monitoring
+    
+    # Weight Matrix Orthogonality (Phase 2.1)
+    apply_weight_orthogonality_loss: bool = False # Enable weight matrix orthogonality constraints
+    weight_orthogonality_loss_weight: float = 0.05 # λ_w weight for weight matrix orthogonality penalty
+    weight_orthogonality_target_layer: str = "ffn_input" # Which layer to constrain: "ffn_input", "ffn_output", "attention", "combined"
+    weight_orthogonality_normalization: str = "frobenius" # Norm type: "frobenius" or "spectral"
+    combine_weight_output_orthogonality: bool = False # Use both weight and output orthogonality constraints
 
     def __post_init__(self):
         # Auto-calculate num_heads if embed_dim is a multiple of 64 and num_heads is at its default

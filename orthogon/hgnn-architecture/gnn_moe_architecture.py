@@ -339,6 +339,7 @@ class GNNMoELayer(nn.Module): # This layer can now use GNN or HGNN based on conf
         
         # Initialize orthogonality loss tracking
         self._last_orthogonality_loss = None
+        self._last_weight_orthogonality_loss = None
         self._training_step = 0
         
         if config.coupler_type == "HGNN":
@@ -429,14 +430,148 @@ class GNNMoELayer(nn.Module): # This layer can now use GNN or HGNN based on conf
         Get the last computed orthogonality loss for this layer.
         """
         return self._last_orthogonality_loss if self._last_orthogonality_loss is not None else torch.tensor(0.0)
+    
+    def compute_weight_orthogonality_loss(self):
+        """
+        Compute orthogonality loss on expert weight matrices (Phase 2.1).
+        
+        Returns:
+            scalar loss encouraging expert weight matrices to be orthogonal
+        """
+        if not self.config.apply_weight_orthogonality_loss:
+            return torch.tensor(0.0, device=next(self.parameters()).device)
+        
+        # Extract target weight matrices based on configuration
+        weight_matrices = self._get_target_weight_matrices()
+        if not weight_matrices:
+            return torch.tensor(0.0, device=next(self.parameters()).device)
+        
+        return self._compute_weight_gram_loss(weight_matrices)
+    
+    def _get_target_weight_matrices(self):
+        """
+        Extract weight matrices to constrain based on configuration.
+        
+        Returns:
+            List of weight matrices to apply orthogonality constraints to
+        """
+        weight_matrices = []
+        
+        target_layer = self.config.weight_orthogonality_target_layer
+        
+        if target_layer in ["ffn_input", "combined"]:
+            # First FFN layer: Linear(embed_dim, embed_dim * 4)
+            for expert in self.experts:
+                if hasattr(expert, 'ffn') and len(expert.ffn) > 0:
+                    ffn_input_layer = expert.ffn[0]  # First layer in FFN sequential
+                    if isinstance(ffn_input_layer, nn.Linear):
+                        weight_matrices.append(ffn_input_layer.weight)
+        
+        if target_layer in ["ffn_output", "combined"]:
+            # Second FFN layer: Linear(embed_dim * 4, embed_dim)
+            for expert in self.experts:
+                if hasattr(expert, 'ffn') and len(expert.ffn) > 3:
+                    ffn_output_layer = expert.ffn[3]  # Fourth layer in FFN sequential (after GELU and Dropout)
+                    if isinstance(ffn_output_layer, nn.Linear):
+                        weight_matrices.append(ffn_output_layer.weight)
+        
+        if target_layer in ["attention", "combined"]:
+            # Attention projection weights (more complex due to MultiheadAttention)
+            for expert in self.experts:
+                if hasattr(expert, 'attention') and hasattr(expert.attention, 'in_proj_weight'):
+                    # MultiheadAttention combines Q, K, V projections
+                    weight_matrices.append(expert.attention.in_proj_weight)
+                elif hasattr(expert, 'attention') and hasattr(expert.attention, 'q_proj_weight'):
+                    # Some implementations have separate Q, K, V weights
+                    if hasattr(expert.attention, 'q_proj_weight'):
+                        weight_matrices.append(expert.attention.q_proj_weight)
+        
+        return weight_matrices
+    
+    def _compute_weight_gram_loss(self, weight_matrices):
+        """
+        Core weight orthogonality computation using Gram matrix approach.
+        
+        Args:
+            weight_matrices: List of weight tensors to constrain
+        Returns:
+            scalar orthogonality loss
+        """
+        if len(weight_matrices) < 2:
+            return torch.tensor(0.0, device=weight_matrices[0].device if weight_matrices else next(self.parameters()).device)
+        
+        device = weight_matrices[0].device
+        
+        if self.config.weight_orthogonality_normalization == "frobenius":
+            # Handle weight matrices of different sizes by normalizing
+            flat_weights = []
+            max_size = 0
+            
+            # First pass: find maximum size
+            for weight in weight_matrices:
+                flat_weight = weight.view(-1)  # Flatten to 1D vector
+                max_size = max(max_size, flat_weight.numel())
+            
+            # Second pass: normalize all weights to same size
+            for weight in weight_matrices:
+                flat_weight = weight.view(-1)  # Flatten to 1D vector
+                
+                if flat_weight.numel() < max_size:
+                    # Pad smaller weight matrices with zeros
+                    padding = torch.zeros(max_size - flat_weight.numel(), device=device)
+                    flat_weight = torch.cat([flat_weight, padding], dim=0)
+                elif flat_weight.numel() > max_size:
+                    # Truncate larger weight matrices (shouldn't happen in practice)
+                    flat_weight = flat_weight[:max_size]
+                
+                flat_weights.append(flat_weight)
+            
+            # Stack normalized weights: (num_experts, max_size)
+            stacked_weights = torch.stack(flat_weights, dim=0)
+            
+            # Compute Gram matrix: G[i,j] = weight_i · weight_j
+            gram_matrix = torch.mm(stacked_weights, stacked_weights.T)  # (E, E)
+            
+        elif self.config.weight_orthogonality_normalization == "spectral":
+            # Use spectral properties of weight matrices (more advanced)
+            # For now, implement a simpler version using SVD-based approach
+            flat_weights = []
+            for weight in weight_matrices:
+                # Compute leading singular vectors
+                U, S, V = torch.svd(weight)
+                # Use leading singular vector as representation
+                leading_vec = U[:, 0] if U.shape[1] > 0 else weight.view(-1)
+                flat_weights.append(leading_vec)
+            
+            stacked_weights = torch.stack(flat_weights, dim=0)
+            gram_matrix = torch.mm(stacked_weights, stacked_weights.T)
+        
+        else:
+            raise ValueError(f"Unknown weight_orthogonality_normalization: {self.config.weight_orthogonality_normalization}")
+        
+        # Target: identity matrix (orthogonal weight matrices)
+        num_experts = len(weight_matrices)
+        identity_target = torch.eye(num_experts, device=device)
+        
+        # MSE loss between gram matrix and identity
+        weight_ortho_loss = F.mse_loss(gram_matrix, identity_target)
+        
+        return weight_ortho_loss
+    
+    def get_last_weight_orthogonality_loss(self):
+        """
+        Get the last computed weight orthogonality loss for this layer.
+        """
+        return self._last_weight_orthogonality_loss if self._last_weight_orthogonality_loss is not None else torch.tensor(0.0)
 
     def forward(self, x, causal_mask=None, key_padding_mask=None):
         expert_outputs_tensors = [expert(x, causal_mask, key_padding_mask) for expert in self.experts]
         # Stack expert outputs: (B, L, E, D)
         stacked_expert_outputs = torch.stack(expert_outputs_tensors, dim=2)
         
-        # NEW: Compute orthogonality loss and store for retrieval
+        # NEW: Compute both types of orthogonality loss and store for retrieval
         self._last_orthogonality_loss = self.compute_orthogonality_loss(stacked_expert_outputs)
+        self._last_weight_orthogonality_loss = self.compute_weight_orthogonality_loss()
         
         coordinated = self.coupler(stacked_expert_outputs) # Coupler expects (B,L,E,D)
         return x + coordinated # Additive skip connection over the whole MoE block
@@ -499,13 +634,14 @@ class GNNMoEModel(nn.Module):
     def get_total_orthogonality_loss(self, training_step=None):
         """
         Collect orthogonality losses from all layers and apply warmup factor.
+        Supports both output and weight orthogonality (Phase 2.1).
         
         Args:
             training_step: Current training step for warmup calculation
         Returns:
             total_orthogonality_loss: Weighted sum of orthogonality losses from all layers
         """
-        if not self.config.apply_orthogonality_loss:
+        if not (self.config.apply_orthogonality_loss or self.config.apply_weight_orthogonality_loss):
             return torch.tensor(0.0)
         
         # Update training step for all layers if provided
@@ -517,13 +653,21 @@ class GNNMoEModel(nn.Module):
         total_loss = total_loss.to(device)
         
         for layer_instance in self.model_layers:
-            if hasattr(layer_instance, 'get_last_orthogonality_loss'):
-                layer_loss = layer_instance.get_last_orthogonality_loss()
-                if layer_loss is not None:
+            # Output orthogonality (existing)
+            if self.config.apply_orthogonality_loss and hasattr(layer_instance, 'get_last_orthogonality_loss'):
+                output_loss = layer_instance.get_last_orthogonality_loss()
+                if output_loss is not None:
                     warmup_factor = layer_instance.get_orthogonality_warmup_factor()
-                    total_loss = total_loss + (layer_loss * warmup_factor)
+                    total_loss = total_loss + (output_loss * warmup_factor * self.config.orthogonality_loss_weight)
+            
+            # Weight orthogonality (Phase 2.1)
+            if self.config.apply_weight_orthogonality_loss and hasattr(layer_instance, 'get_last_weight_orthogonality_loss'):
+                weight_loss = layer_instance.get_last_weight_orthogonality_loss()
+                if weight_loss is not None:
+                    warmup_factor = layer_instance.get_orthogonality_warmup_factor()
+                    total_loss = total_loss + (weight_loss * warmup_factor * self.config.weight_orthogonality_loss_weight)
         
-        return total_loss * self.config.orthogonality_loss_weight
+        return total_loss
     
     def update_all_training_steps(self, step):
         """

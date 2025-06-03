@@ -91,6 +91,19 @@ if __name__ == "__main__":
     spec_group.add_argument('--track_expert_specialization', action='store_true', dest='track_specialization_cli_true', help="Enable expert specialization tracking (sets to True).")
     spec_group.add_argument('--no_track_expert_specialization', action='store_false', dest='track_specialization_cli_false', help="Disable expert specialization tracking (sets to False).")
     
+    # Weight Matrix Orthogonality Args (Phase 2.1)
+    weight_orth_group = parser.add_mutually_exclusive_group()
+    weight_orth_group.add_argument('--apply_weight_orthogonality_loss', action='store_true', dest='apply_weight_orthogonality_cli_true', help="Enable weight matrix orthogonality constraints (sets to True).")
+    weight_orth_group.add_argument('--no_apply_weight_orthogonality_loss', action='store_false', dest='apply_weight_orthogonality_cli_false', help="Disable weight matrix orthogonality constraints (sets to False).")
+    
+    parser.add_argument('--weight_orthogonality_loss_weight', type=float, default=temp_cfg.weight_orthogonality_loss_weight, help=f"Weight for weight matrix orthogonality loss (default: {temp_cfg.weight_orthogonality_loss_weight})")
+    parser.add_argument('--weight_orthogonality_target_layer', type=str, default=temp_cfg.weight_orthogonality_target_layer, choices=["ffn_input", "ffn_output", "attention", "combined"], help=f"Which weight matrices to constrain (default: {temp_cfg.weight_orthogonality_target_layer})")
+    parser.add_argument('--weight_orthogonality_normalization', type=str, default=temp_cfg.weight_orthogonality_normalization, choices=["frobenius", "spectral"], help=f"Normalization method for weight orthogonality (default: {temp_cfg.weight_orthogonality_normalization})")
+    
+    combine_group = parser.add_mutually_exclusive_group()
+    combine_group.add_argument('--combine_weight_output_orthogonality', action='store_true', dest='combine_orthogonality_cli_true', help="Use both weight and output orthogonality constraints (sets to True).")
+    combine_group.add_argument('--no_combine_weight_output_orthogonality', action='store_false', dest='combine_orthogonality_cli_false', help="Use only one type of orthogonality constraint (sets to False).")
+    
     # Training Hyperparameters Args
     parser.add_argument('--batch_size', type=int, default=temp_cfg.batch_size, help=f"Batch size (default: {temp_cfg.batch_size})")
     parser.add_argument('--learning_rate', type=float, default=temp_cfg.learning_rate, help=f"Learning rate (default: {temp_cfg.learning_rate})")
@@ -138,9 +151,21 @@ if __name__ == "__main__":
         track_specialization_value_from_cli = True
     elif hasattr(args, 'track_specialization_cli_false') and not args.track_specialization_cli_false: # This implies --no_track_expert_specialization was passed
         track_specialization_value_from_cli = False
+    
+    apply_weight_orthogonality_value_from_cli = None
+    if args.apply_weight_orthogonality_cli_true: # This implies --apply_weight_orthogonality_loss was passed
+        apply_weight_orthogonality_value_from_cli = True
+    elif hasattr(args, 'apply_weight_orthogonality_cli_false') and not args.apply_weight_orthogonality_cli_false: # This implies --no_apply_weight_orthogonality_loss was passed
+        apply_weight_orthogonality_value_from_cli = False
+    
+    combine_orthogonality_value_from_cli = None
+    if args.combine_orthogonality_cli_true: # This implies --combine_weight_output_orthogonality was passed
+        combine_orthogonality_value_from_cli = True
+    elif hasattr(args, 'combine_orthogonality_cli_false') and not args.combine_orthogonality_cli_false: # This implies --no_combine_weight_output_orthogonality was passed
+        combine_orthogonality_value_from_cli = False
         
     for arg_name, arg_val in vars(args).items():
-        if arg_name in ['hgnn_learnable_cli_true', 'hgnn_learnable_cli_false', 'apply_orthogonality_cli_true', 'apply_orthogonality_cli_false', 'track_specialization_cli_true', 'track_specialization_cli_false']:
+        if arg_name in ['hgnn_learnable_cli_true', 'hgnn_learnable_cli_false', 'apply_orthogonality_cli_true', 'apply_orthogonality_cli_false', 'track_specialization_cli_true', 'track_specialization_cli_false', 'apply_weight_orthogonality_cli_true', 'apply_weight_orthogonality_cli_false', 'combine_orthogonality_cli_true', 'combine_orthogonality_cli_false']:
             continue # Skip these temp argparse dest names
 
         if hasattr(cfg, arg_name):
@@ -168,6 +193,16 @@ if __name__ == "__main__":
         if cfg.track_expert_specialization != track_specialization_value_from_cli:
              verbose_print(f"Overriding config.track_expert_specialization from {cfg.track_expert_specialization} to CLI arg: {track_specialization_value_from_cli}")
         cfg.track_expert_specialization = track_specialization_value_from_cli
+    
+    if apply_weight_orthogonality_value_from_cli is not None:
+        if cfg.apply_weight_orthogonality_loss != apply_weight_orthogonality_value_from_cli:
+             verbose_print(f"Overriding config.apply_weight_orthogonality_loss from {cfg.apply_weight_orthogonality_loss} to CLI arg: {apply_weight_orthogonality_value_from_cli}")
+        cfg.apply_weight_orthogonality_loss = apply_weight_orthogonality_value_from_cli
+    
+    if combine_orthogonality_value_from_cli is not None:
+        if cfg.combine_weight_output_orthogonality != combine_orthogonality_value_from_cli:
+             verbose_print(f"Overriding config.combine_weight_output_orthogonality from {cfg.combine_weight_output_orthogonality} to CLI arg: {combine_orthogonality_value_from_cli}")
+        cfg.combine_weight_output_orthogonality = combine_orthogonality_value_from_cli
     
     # Set global verbose flag
     if args.quiet:

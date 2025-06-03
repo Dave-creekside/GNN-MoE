@@ -32,6 +32,20 @@ This folder contains comprehensive documentation of the orthogonal expert traini
 - Hierarchical constraints
 - Implementation timeline
 
+### 🔧 [phase2_1_weight_orthogonality_plan.md](phase2_1_weight_orthogonality_plan.md)
+**Phase 2.1 detailed implementation plan**
+- Mathematical framework for weight matrix constraints
+- Architecture changes and code structure
+- Testing strategy and validation experiments
+- Timeline and success criteria
+
+### ✅ [phase2_1_implementation_checklist.md](phase2_1_implementation_checklist.md)
+**Phase 2.1 development checklist**
+- Step-by-step implementation tasks
+- Testing commands and validation experiments
+- Development notes and common pitfalls
+- Success criteria and progress tracking
+
 ## 🎯 Quick Summary
 
 **Status**: Phase 1 Complete ✅  
