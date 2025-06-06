@@ -39,8 +39,21 @@ def save_checkpoint(state, is_best, checkpoint_dir="checkpoints", filename="chec
     filepath = os.path.join(checkpoint_dir, filename)
     torch.save(state, filepath)
     if is_best:
-        shutil.copyfile(filepath, os.path.join(checkpoint_dir, "best_model.pth.tar"))
-        print(f"✅ Saved new best model to {os.path.join(checkpoint_dir, 'best_model.pth.tar')}")
+        best_model_path = os.path.join(checkpoint_dir, "best_model.pth.tar")
+        shutil.copyfile(filepath, best_model_path)
+        print(f"✅ Saved new best model to {best_model_path}")
+        
+        # Save the config as a separate JSON file for the best model
+        if 'config' in state:
+            config_dict = state['config']
+            config_json_path = os.path.join(checkpoint_dir, "config.json")
+            try:
+                import json # Ensure json is imported
+                with open(config_json_path, 'w') as f:
+                    json.dump(config_dict, f, indent=4)
+                print(f"📝 Saved config for best model to {config_json_path}")
+            except Exception as e:
+                print(f"⚠️ Error saving config.json: {e}")
     # else: # Reduce verbosity for non-best checkpoints
         # print(f"✅ Saved checkpoint to {filepath}")
 
