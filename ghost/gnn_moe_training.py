@@ -18,8 +18,8 @@ from collections import defaultdict
 import time
 
 # Assuming GhostMoEConfig and model classes will be imported in the main script
-# from .gnn_moe_config import GhostMoEConfig
-# from .gnn_moe_architecture import GhostMoEModel, create_dynamic_optimizer, PrimaryGhostLRScheduler
+from .gnn_moe_config import GhostMoEConfig
+from .gnn_moe_architecture import GhostMoEModel, create_dynamic_optimizer, PrimaryGhostLRScheduler
 
 # --- Checkpoint Helper Functions (can be shared or copied) ---
 def save_checkpoint(state, is_best, checkpoint_dir="checkpoints", filename="checkpoint.pth.tar"):
@@ -112,11 +112,15 @@ def train_ghost_moe_model(model, train_loader, eval_loader, device, config,
     # Use the dynamic optimizer from the architecture file
     optimizer = create_dynamic_optimizer(model, config)
     
+    # The scheduler needs a `max_steps` value, which we calculate here.
+    actual_batches_per_epoch = len(train_loader) if config.max_batches_per_epoch == -1 else min(len(train_loader), config.max_batches_per_epoch)
+    if not hasattr(config, 'max_steps') or config.max_steps is None:
+        config.max_steps = config.epochs * actual_batches_per_epoch
+    
     # Use the coupled LR scheduler
     lr_scheduler = PrimaryGhostLRScheduler(config, optimizer)
 
-    actual_batches_per_epoch = len(train_loader) if config.max_batches_per_epoch == -1 else min(len(train_loader), config.max_batches_per_epoch)
-    total_steps = config.epochs * actual_batches_per_epoch
+    total_steps = config.max_steps
     
     if total_steps == 0:
         return defaultdict(list), float('inf')

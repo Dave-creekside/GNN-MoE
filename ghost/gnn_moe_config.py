@@ -38,8 +38,8 @@ class GNNMoEConfig:
 
     # Checkpointing & Output
     checkpoint_dir: str = "checkpoints" # Base directory, run-specific subdir will be created if run_name is provided
-    resume_checkpoint: Optional[str] = None
-    run_name: Optional[str] = None # For naming output files and creating subdir in checkpoint_dir
+    resume_checkpoint: str = None
+    run_name: str = None # For naming output files and creating subdir in checkpoint_dir
 
     # Technical
     seed: int = 42
@@ -47,8 +47,8 @@ class GNNMoEConfig:
 
     # HGNN Specific Configuration (defaults for GNN compatibility)
     coupler_type: str = "GNN"  # Can be "GNN" or "HGNN"
-    hgnn_conv_type: Optional[str] = "HypergraphConv" # PyG layer name, e.g., "HypergraphConv"
-    static_hyperedge_strategy: Optional[str] = "all_pairs" # e.g., "all_pairs", "all_triplets"
+    hgnn_conv_type: str = "HypergraphConv" # PyG layer name, e.g., "HypergraphConv"
+    static_hyperedge_strategy: str = "all_pairs" # e.g., "all_pairs", "all_triplets"
     hgnn_learnable_edge_weights: bool = True # If True, HGNNExpertCoupler will have learnable weights for hyperedges
 
     # Orthogonal Expert Training Configuration
