@@ -22,7 +22,7 @@ def verbose_print(*args, **kwargs):
 
 # Import from modules
 from .gnn_moe_config import GhostMoEConfig
-from .gnn_moe_architecture import GhostMoEModel, create_dynamic_optimizer
+from .gnn_moe_architecture import GhostMoEModel
 from .gnn_moe_training import load_checkpoint, train_ghost_moe_model
 from .gnn_moe_data import load_data
 
@@ -71,8 +71,11 @@ if __name__ == "__main__":
     if cfg.run_name:
         cfg.checkpoint_dir = os.path.join(cfg.checkpoint_dir, cfg.run_name)
     
+    # This check was moved from the training script to here to ensure it exists
+    # before any part of the training (including logging) begins.
     if not os.path.exists(cfg.checkpoint_dir):
         os.makedirs(cfg.checkpoint_dir)
+        verbose_print(f"📁 Created checkpoint directory: {cfg.checkpoint_dir}")
 
     selected_device = setup_environment(cfg)
     train_loader, eval_loader, tokenizer, data_mode = load_data(cfg)
@@ -98,11 +101,9 @@ if __name__ == "__main__":
         initial_best_loss=best_eval_loss_resumed
     )
     
-    summary_data = {
-        "run_name": cfg.run_name,
-        "best_eval_loss": float(f"{final_best_loss:.4f}") if final_best_loss != float('inf') else None,
-    }
-
-    summary_file_path = os.path.join(cfg.checkpoint_dir, "run_summary.json")
-    with open(summary_file_path, 'w') as f:
-        json.dump(summary_data, f, indent=4)
+    # Save the detailed training stats to a JSON file
+    stats_file_path = os.path.join(cfg.checkpoint_dir, "training_log.json")
+    with open(stats_file_path, 'w') as f:
+        json.dump(training_stats, f, indent=4)
+    
+    verbose_print(f"📝 Detailed training log saved to {stats_file_path}")

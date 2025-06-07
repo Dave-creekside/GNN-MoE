@@ -100,32 +100,31 @@ def update_parameter_group_lrs(optimizer, primary_lr, ghost_lrs):
             # This assumes one LR for all ghosts, need to adjust if per-ghost LR is needed
             param_group['lr'] = ghost_lrs[0] if ghost_lrs else 0
 
-def log_ghost_training_metrics(step, total_loss, base_loss, orthogonality_loss, ghost_activations, primary_lr, ghost_lrs):
+def log_ghost_training_metrics(step, total_loss, base_loss, orthogonality_loss, ghost_activations, primary_lr, ghost_lrs, saturation_metrics):
     print(f"Step {step}: Total Loss: {total_loss.item():.4f}, Base Loss: {base_loss.item():.4f}, Ortho Loss: {orthogonality_loss.item():.4f}")
     print(f"  LRs - Primary: {primary_lr:.2e}, Ghosts: {[f'{lr:.2e}' for lr in ghost_lrs]}")
     print(f"  Ghost Activations: {[f'{act:.2f}' for act in ghost_activations]}")
+    if saturation_metrics:
+        print(f"  Saturation: {saturation_metrics.get('saturation_level', 0):.4f}, Ortho Score: {saturation_metrics.get('orthogonality_score', 0):.4f}")
 
 
 def train_ghost_moe_model(model, train_loader, eval_loader, device, config,
                           resume_from_epoch=0, resume_step=0, initial_best_loss=float('inf')):
     
-    # Use the dynamic optimizer from the architecture file
     optimizer = create_dynamic_optimizer(model, config)
     
-    # The scheduler needs a `max_steps` value, which we calculate here.
     actual_batches_per_epoch = len(train_loader) if config.max_batches_per_epoch == -1 else min(len(train_loader), config.max_batches_per_epoch)
     if not hasattr(config, 'max_steps') or config.max_steps is None:
         config.max_steps = config.epochs * actual_batches_per_epoch
     
-    # Use the coupled LR scheduler
     lr_scheduler = PrimaryGhostLRScheduler(config, optimizer)
 
     total_steps = config.max_steps
     
     if total_steps == 0:
-        return defaultdict(list), float('inf')
+        return [], float('inf')
 
-    stats = defaultdict(list)
+    stats = [] # Change to a list of dicts
     best_eval_loss = initial_best_loss
     current_step = resume_step
     start_time = time.time()
@@ -161,13 +160,34 @@ def train_ghost_moe_model(model, train_loader, eval_loader, device, config,
             
             current_step += 1
             
+            pbar_train.set_postfix({
+                'loss': f'{total_loss.item():.3f}',
+                'lm': f'{base_loss.item():.3f}',
+                'lr': f"{primary_lr:.1e}"
+            })
+
             if current_step % config.eval_every == 0:
-                log_ghost_training_metrics(current_step, total_loss, base_loss, orthogonality_loss, ghost_activations, primary_lr, ghost_lrs)
-                
                 eval_loss, perplexity = evaluate_model(model, eval_loader, device, config)
-                stats['eval_loss'].append(eval_loss)
-                stats['eval_perplexity'].append(perplexity)
-                stats['eval_step'].append(current_step)
+                
+                saturation_metrics = model.get_last_saturation_metrics()
+                
+                log_ghost_training_metrics(current_step, total_loss, base_loss, orthogonality_loss, ghost_activations, primary_lr, ghost_lrs, saturation_metrics)
+                print(f"  Evaluation - Loss: {eval_loss:.4f}, Perplexity: {perplexity:.2f}")
+
+                # Append a snapshot of all metrics
+                stats.append({
+                    'step': current_step,
+                    'train_loss': total_loss.item(),
+                    'lm_loss': base_loss.item(),
+                    'orthogonality_loss': orthogonality_loss.item(),
+                    'eval_loss': eval_loss,
+                    'eval_perplexity': perplexity,
+                    'primary_lr': primary_lr,
+                    'ghost_lrs': ghost_lrs,
+                    'ghost_activations': ghost_activations.cpu().numpy().tolist(),
+                    'saturation_level': saturation_metrics.get('saturation_level', 0),
+                    'orthogonality_score': saturation_metrics.get('orthogonality_score', 0)
+                })
                 
                 is_best = eval_loss < best_eval_loss
                 if is_best:

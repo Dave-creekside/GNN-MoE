@@ -433,6 +433,12 @@ class GhostMoEModel(nn.Module):
             return self.model_layers[0]._last_ghost_activations
         return torch.zeros(self.config.num_ghost_experts)
 
+    def get_last_saturation_metrics(self):
+        """Retrieves saturation metrics from the first layer for logging."""
+        if self.model_layers and hasattr(self.model_layers[0], '_last_saturation_metrics'):
+            return self.model_layers[0]._last_saturation_metrics
+        return {}
+
     def get_ghost_saturation_loss(self):
         # Placeholder for a potential loss based on saturation
         return torch.tensor(0.0)

@@ -129,6 +129,16 @@ def run_sweep():
             print(f"   ❌ An unexpected error occurred: {e}")
 
     print("\n🎉 Sweep finished!")
+    
+    # --- Final Analysis ---
+    print("\n📊 Running final analysis on sweep results...")
+    try:
+        analysis_cmd = ["python", "ghost/tests/analyze_sweep.py", sweep_root_dir]
+        subprocess.run(analysis_cmd, check=True)
+        print("   ✅ Analysis complete. Plots saved in sweep directory.")
+    except Exception as e:
+        print(f"   ❌ Analysis script failed: {e}")
+
 
 if __name__ == "__main__":
     run_sweep()
