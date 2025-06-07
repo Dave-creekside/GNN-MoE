@@ -25,6 +25,7 @@ from .gnn_moe_config import GhostMoEConfig
 from .gnn_moe_architecture import GhostMoEModel
 from .gnn_moe_training import load_checkpoint, train_ghost_moe_model
 from .gnn_moe_data import load_data
+from .analysis import run_analysis
 
 def setup_environment(config: GhostMoEConfig):
     if torch.cuda.is_available():
@@ -103,7 +104,12 @@ if __name__ == "__main__":
     
     # Save the detailed training stats to a JSON file
     stats_file_path = os.path.join(cfg.checkpoint_dir, "training_log.json")
-    with open(stats_file_path, 'w') as f:
-        json.dump(training_stats, f, indent=4)
-    
-    verbose_print(f"📝 Detailed training log saved to {stats_file_path}")
+    if training_stats:
+        with open(stats_file_path, 'w') as f:
+            json.dump(training_stats, f, indent=4)
+        verbose_print(f"📝 Detailed training log saved to {stats_file_path}")
+        
+        # Automatically run analysis on the completed run
+        run_analysis(stats_file_path)
+    else:
+        verbose_print("⚠️ No training stats generated, skipping log save and analysis.")

@@ -22,16 +22,19 @@ from .gnn_moe_config import GhostMoEConfig
 from .gnn_moe_architecture import GhostMoEModel, create_dynamic_optimizer, PrimaryGhostLRScheduler
 
 # --- Checkpoint Helper Functions (can be shared or copied) ---
-def save_checkpoint(state, is_best, checkpoint_dir="checkpoints", filename="checkpoint.pth.tar"):
+def save_checkpoint(state, is_best, checkpoint_dir="checkpoints", filename="checkpoint.pt"):
     if not os.path.exists(checkpoint_dir):
         os.makedirs(checkpoint_dir)
     filepath = os.path.join(checkpoint_dir, filename)
     torch.save(state, filepath)
     if is_best:
-        best_model_path = os.path.join(checkpoint_dir, "best_model.pth.tar")
+        best_model_path = os.path.join(checkpoint_dir, "best_model.pt")
         shutil.copyfile(filepath, best_model_path)
         if 'config' in state:
             config_dict = state['config']
+            # Convert dataclass to dict if necessary
+            if hasattr(config_dict, '__dict__'):
+                config_dict = vars(config_dict)
             config_json_path = os.path.join(checkpoint_dir, "config.json")
             try:
                 import json
@@ -42,6 +45,7 @@ def save_checkpoint(state, is_best, checkpoint_dir="checkpoints", filename="chec
 
 def load_checkpoint(checkpoint_path, model, optimizer=None, scheduler=None):
     if not os.path.exists(checkpoint_path):
+        print(f"Checkpoint not found at {checkpoint_path}, starting from scratch.")
         return 0, 0, float('inf')
     
     checkpoint = torch.load(checkpoint_path, map_location='cpu')
@@ -122,12 +126,17 @@ def train_ghost_moe_model(model, train_loader, eval_loader, device, config,
     total_steps = config.max_steps
     
     if total_steps == 0:
+        print("Warning: total_steps is 0. No training will occur.")
         return [], float('inf')
 
-    stats = [] # Change to a list of dicts
+    training_log = []
     best_eval_loss = initial_best_loss
     current_step = resume_step
     start_time = time.time()
+
+    # Ensure checkpoint directory exists before starting
+    if config.checkpoint_dir:
+        os.makedirs(config.checkpoint_dir, exist_ok=True)
 
     for epoch in range(resume_from_epoch, config.epochs):
         model.train()
@@ -166,7 +175,12 @@ def train_ghost_moe_model(model, train_loader, eval_loader, device, config,
                 'lr': f"{primary_lr:.1e}"
             })
 
+            # Provide frequent status updates (every 5 steps for more visibility)
+            if current_step % 5 == 0:
+                print(f"\r  Step {current_step}: Loss={total_loss.item():.4f}, LR={primary_lr:.2e}, Ghost Activations={[f'{act:.2f}' for act in ghost_activations]}", end="", flush=True)
+
             if current_step % config.eval_every == 0:
+                print()  # New line before evaluation output
                 eval_loss, perplexity = evaluate_model(model, eval_loader, device, config)
                 
                 saturation_metrics = model.get_last_saturation_metrics()
@@ -175,33 +189,37 @@ def train_ghost_moe_model(model, train_loader, eval_loader, device, config,
                 print(f"  Evaluation - Loss: {eval_loss:.4f}, Perplexity: {perplexity:.2f}")
 
                 # Append a snapshot of all metrics
-                stats.append({
+                log_entry = {
                     'step': current_step,
                     'train_loss': total_loss.item(),
-                    'lm_loss': base_loss.item(),
-                    'orthogonality_loss': orthogonality_loss.item(),
                     'eval_loss': eval_loss,
                     'eval_perplexity': perplexity,
                     'primary_lr': primary_lr,
                     'ghost_lrs': ghost_lrs,
-                    'ghost_activations': ghost_activations.cpu().numpy().tolist(),
+                    'ghost_activations': ghost_activations.cpu().numpy().tolist() if torch.is_tensor(ghost_activations) else ghost_activations,
                     'saturation_level': saturation_metrics.get('saturation_level', 0),
                     'orthogonality_score': saturation_metrics.get('orthogonality_score', 0)
-                })
+                }
+                training_log.append(log_entry)
                 
                 is_best = eval_loss < best_eval_loss
                 if is_best:
                     best_eval_loss = eval_loss
                 
                 save_checkpoint({
-                    'epoch': epoch + 1,
                     'step': current_step,
                     'model_state_dict': model.state_dict(),
-                    'optimizer_state_dict': optimizer.state_dict(),
-                    'scheduler_state_dict': lr_scheduler.primary_scheduler.state_dict(),
                     'best_eval_loss': best_eval_loss,
-                    'config': vars(config)
+                    'config': config
                 }, is_best, checkpoint_dir=config.checkpoint_dir)
+                
                 model.train()
 
-    return stats, best_eval_loss
+    # Save the final training log
+    if config.checkpoint_dir:
+        log_path = os.path.join(config.checkpoint_dir, 'training_log.json')
+        with open(log_path, 'w') as f:
+            json.dump(training_log, f, indent=4)
+        print(f"Saved training log to {log_path}")
+
+    return training_log, best_eval_loss
