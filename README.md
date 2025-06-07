@@ -64,6 +64,20 @@ This project has progressed through three distinct phases, each introducing a si
   - **Emergent Specialization:** Experts are forced to become non-redundant, increasing the model's parameter efficiency.
   - **Adaptive Controller:** An intelligent system (`AdaptiveWeightOrthogonalityController`) that monitors expert specialization in real-time and adjusts the orthogonality constraint strength to achieve a target level of specialization, eliminating manual tuning and improving training stability.
 
+### **Phase 4: Ghost Experts - Adaptive Capacity & Overflow Specialization**
+
+- **Directory:** [`ghost/`](./ghost/)
+- **Core Idea:** Builds upon the adaptive orthogonal HGNN-MoE by introducing "Ghost Experts." These experts remain dormant until primary experts, despite being highly specialized and orthogonal, reach their capacity (saturate). Ghost experts then dynamically activate to handle overflow patterns, allowing the model to adapt its representational capacity to task complexity without a predefined limit. This ensures primary expert specializations are preserved while enabling the model to tackle more complex problems.
+- **Key Features:**
+    -   **Saturation-Activated Experts:** Ghost experts activate based on a saturation signal derived from primary expert orthogonality and unexplained input variance.
+    -   **Inverse Learning Rate Dynamics:** A novel learning rate schedule where primary experts' LRs decrease over time (fine-tuning) while activated ghost experts' LRs increase (learning new complexities), creating a natural handoff.
+    -   **Triple Hypergraph Coupling:** A multi-level communication system with separate hypergraph couplers for:
+        1.  Primary expert interactions (preserving existing specializations).
+        2.  Ghost expert interactions (allowing coordination among newly activated capacities).
+        3.  Mixed primary-ghost interactions (enabling compositional reasoning).
+    -   **Adaptive Model Capacity:** The system automatically scales its active expert count based on task demands rather than a fixed upfront configuration.
+    -   **Preservation of Orthogonality:** Designed to seamlessly integrate with and protect the hard-won specializations of the adaptive orthogonal primary experts.
+
 ## 🧠 Key Concepts
 
 ### Dense vs. Sparse MoE
@@ -92,12 +106,13 @@ The project is organized chronologically by its major phases:
 ├── gnn_MoE/              # Phase 1: The original GNN-Coupled MoE.
 ├── hgnn_MoE/             # Phase 2: Evolution to Hypergraph-Coupled MoE.
 │   └── build-log/        # Detailed logs of the development process.
-└── orthogon/             # Phase 3: Introduction of Orthogonality.
-    ├── project-knowledge/  # High-level documentation on the concepts.
-    └── adaptive-orthogonal/ # The latest, most advanced implementation.
-        ├── run_gnn_moe.py   # Main script for training runs.
-        ├── gnn_moe_architecture.py # Defines all model components.
-        └── ...
+├── orthogon/             # Phase 3: Introduction of Orthogonality.
+│   ├── project-knowledge/  # High-level documentation on the concepts.
+│   └── adaptive-orthogonal/ # The latest, most advanced implementation.
+└── ghost/                # Phase 4: Ghost Experts with Adaptive Capacity.
+    ├── run_gnn_moe.py   # Main script for training runs.
+    ├── gnn_moe_architecture.py # Defines all model components.
+    └── ...
 ```
 
 **Key Files:**
